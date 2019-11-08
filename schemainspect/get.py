@@ -1,8 +1,9 @@
 from .inspector import NullInspector
 from .misc import connection_from_s_or_c
 from .pg import PostgreSQL
+from .redshift.obj import Redshift
 
-SUPPORTED = {"postgresql": PostgreSQL}
+SUPPORTED = {"postgresql": PostgreSQL, "redshift": Redshift}
 
 
 def get_inspector(x, schema=None):

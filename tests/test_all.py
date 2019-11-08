@@ -35,6 +35,14 @@ T_CREATE = """create table "public"."films" (
     "drange" daterange
 );
 """
+REDSHIFT_T_CREATE = """create table "public"."films" (
+    "code" character(5) not null,
+    "title" character varying(256) not null,
+    "did" bigint not null,
+    "date_prod" date,
+    "kind" character varying(10)
+);
+"""
 CV = "character varying"
 CV10 = "character varying(10)"
 INT = "interval"
@@ -52,6 +60,16 @@ FILMS_COLUMNS = od(
         ("drange", ColumnInfo("drange", "daterange", PGRANGE)),
     ]
 )
+REDSHIFT_FILMS_COLUMNS = FILMS_COLUMNS.copy()
+# Redshift doesn't support interval types
+del REDSHIFT_FILMS_COLUMNS["drange"]
+# Redshift doesn't allow `range` as a column type
+del REDSHIFT_FILMS_COLUMNS["len"]
+# Redshift defaults to CHARACTER VARYING (256)
+REDSHIFT_FILMS_COLUMNS["title"] = ColumnInfo(
+    "title", "character varying", str, dbtypestr="character varying(256)"
+)
+
 FILMSF_COLUMNS = od(
     [
         ("title", ColumnInfo("title", "character varying", str)),
@@ -84,6 +102,9 @@ MVDEF = """create materialized view "public"."mv_films" as  SELECT films.code,
     films.len,
     films.drange
    FROM films;
+"""
+
+REDSHIFT_VDEF = """create or replace view "public"."v_films" as SELECT films.code, films.title, films.did, films.date_prod, films.kind FROM films;
 """
 
 
@@ -321,6 +342,23 @@ def setup_pg_schema(s):
     )
 
 
+def setup_redshift_schema(s):
+    s.execute("create schema otherschema")
+    s.execute(
+        """
+        CREATE TABLE films (
+            code        char(5) CONSTRAINT firstkey PRIMARY KEY,
+            title       varchar NOT NULL,
+            did         bigint NOT NULL,
+            date_prod   date,
+            kind        varchar(10)
+        );
+    """
+    )
+    s.execute("""CREATE VIEW v_films AS (select * from films)""")
+    s.execute("""CREATE VIEW v_films2 AS (select * from v_films)""")
+
+
 def n(name, schema="public"):
     return quoted_identifier(name, schema=schema)
 
@@ -444,7 +482,9 @@ def asserts_pg(i):
     # privileges
     g = InspectedPrivilege("table", "public", "films", "select", "postgres")
     g = i.privileges[g.key]
-    assert g.create_statement == 'grant select on table {} to "postgres";'.format(t_films)
+    assert g.create_statement == 'grant select on table {} to "postgres";'.format(
+        t_films
+    )
     assert g.drop_statement == 'revoke select on table {} from "postgres";'.format(
         t_films
     )
@@ -480,19 +520,76 @@ def asserts_pg(i):
         tid.change_string_to_enum_statement("t")
 
 
-def test_weird_names(db):
-    with S(db) as s:
+def asserts_redshift(i):
+    # schemas
+    assert list(i.schemas.keys()) == ["otherschema", "public"]
+    otherschema = i.schemas["otherschema"]
+    assert i.schemas["public"] != i.schemas["otherschema"]
+    assert otherschema.create_statement == 'create schema if not exists "otherschema";'
+    assert otherschema.drop_statement == 'drop schema if exists "otherschema";'
+
+    # to_pytype
+    assert to_pytype(i.dialect, "integer") == int
+    assert to_pytype(i.dialect, "nonexistent") == type(None)  # noqa
+
+    # dialect
+    assert i.dialect.name == "redshift"
+
+    # tables and views
+    films = n("films")
+    v_films = n("v_films")
+    v_films2 = n("v_films2")
+    v = i.views[v_films]
+    public_views = od((k, v) for k, v in i.views.items() if v.schema == "public")
+    assert list(public_views.keys()) == [v_films, v_films2]
+    assert v.columns == REDSHIFT_FILMS_COLUMNS
+    assert v.create_statement == REDSHIFT_VDEF
+    assert v == v
+    assert v == deepcopy(v)
+    assert v.drop_statement == "drop view if exists {};".format(v_films)
+    v = i.views[v_films]
+
+    # dependencies
+    assert v.dependent_on == [films]
+    v = i.views[v_films2]
+    assert v.dependent_on == [v_films]
+
+    for k, r in i.relations.items():
+        for dependent in r.dependents:
+            assert k in i.relations[dependent].dependent_on
+        for dependency in r.dependent_on:
+            assert k in i.relations[dependency].dependents
+
+    # tables
+    t_films = n("films")
+    t = i.tables[t_films]
+
+    # create and drop tables
+    assert t.create_statement == REDSHIFT_T_CREATE
+    assert t.drop_statement == "drop table {};".format(t_films)
+    assert t.alter_table_statement("x") == "alter table {} x;".format(t_films)
+
+
+def test_weird_names(postgres_db):
+    with S(postgres_db) as s:
         s.execute("""create table "a(abc=3)"(id text)  """)
         i = get_inspector(s)
         assert list(i.tables.keys())[0] == '"public"."a(abc=3)"'
 
 
-def test_postgres_inspect(db):
-    with S(db) as s:
+def test_postgres_inspect(postgres_db):
+    with S(postgres_db) as s:
         setup_pg_schema(s)
         i = get_inspector(s)
         asserts_pg(i)
         assert i == i == get_inspector(s)
+
+
+def test_redshift_inspect(redshift_db):
+    with S(redshift_db) as s:
+        setup_redshift_schema(s)
+        i = get_inspector(s)
+        asserts_redshift(i)
 
 
 def test_empty():
