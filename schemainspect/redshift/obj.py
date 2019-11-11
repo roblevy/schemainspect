@@ -20,7 +20,13 @@ FUNCTIONS_QUERY = resource_text("sql/functions.sql")
 DEPS_QUERY = resource_text("sql/deps.sql")
 
 
-class InspectedSelectable(PGInspectedSelectable):
+class RedshiftInspectedSelectable(PGInspectedSelectable):
+    def __init__(self, *args, diststyle="auto", dist_key=None, sort_keys, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.diststyle = diststyle
+        self.dist_key = dist_key
+        self.sort_keys = sort_keys
+
     @property
     def create_statement(self):
         n = self.quoted_full_name
@@ -31,8 +37,8 @@ class InspectedSelectable(PGInspectedSelectable):
             if colspec:
                 colspec = "\n" + colspec
                 create_statement = CREATE_TABLE.format(
-                    n, colspec, ""
-                )  # TODO: Add table_attribute
+                    n, colspec, self.table_attributes
+                )
         elif self.relationtype == "v":
             create_statement = "create or replace view {} as {}\n".format(
                 n, self.definition
@@ -40,6 +46,28 @@ class InspectedSelectable(PGInspectedSelectable):
         else:
             raise NotImplementedError  # pragma: no cover
         return create_statement
+
+    @property
+    def table_attributes(self):
+        dist_style = "diststyle {}".format(self.diststyle)
+        return "{}\n{}{}".format(dist_style, self.distkey, self.sortkey)
+
+    @property
+    def distkey(self):
+        return "distkey ({})\n".format(self.dist_key) if self.dist_key else ""
+
+    @property
+    def sortkey(self):
+        if len(self.sort_keys) == 1:
+            sortkey_type = ""
+        elif any(order < 0 for order in self.sort_keys.values()):
+            sortkey_type = "interleaved "
+        else:
+            sortkey_type = "compound "
+        # TODO: Return COMPOUND (foo, bar, baz) etc.
+        sorted_sort_keys = sorted(self.sort_keys.items(), key=lambda x: abs(x[1]))
+        sorted_sortkey_names = [key[0] for key in sorted_sort_keys]
+        return "{}sortkey ({})".format(sortkey_type, ", ".join(sorted_sortkey_names))
 
 
 class Redshift(DBInspector):
@@ -115,8 +143,9 @@ class Redshift(DBInspector):
 
         q = self.c.execute(self.ALL_RELATIONS_QUERY)
         for _, g in groupby(q, lambda x: (x.relationtype, x.schema, x.name)):
-            clist = list(g)
-            f = clist[0]
+            rows = list(g)
+            f = rows[0]
+            clist = [c for c in rows if c.position_number]
 
             columns = [
                 ColumnInfo(
@@ -128,14 +157,19 @@ class Redshift(DBInspector):
                     not_null=c.not_null,
                 )
                 for c in clist
-                if c.position_number
             ]
 
-            s = InspectedSelectable(
+            dist_key = next((c.attname for c in clist if c.is_dist_key), None)
+            sort_keys = od((c.attname, c.sort_key_ord) for c in clist if c.sort_key_ord)
+
+            s = RedshiftInspectedSelectable(
                 name=f.name,
                 schema=f.schema,
                 columns=od((c.name, c) for c in columns),
                 relationtype=f.relationtype,
+                diststyle=f.diststyle,
+                dist_key=dist_key,
+                sort_keys=sort_keys,
                 definition=f.definition,
                 comment=f.comment,
             )

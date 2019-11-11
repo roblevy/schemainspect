@@ -3,13 +3,26 @@ with r as (
         c.relname as name,
         n.nspname as schema,
         c.relkind as relationtype,
-        c.oid as oid,
+        c.reloid as oid,
+        -- https://docs.aws.amazon.com/en_pv/redshift/latest/dg/r_PG_CLASS_INFO.html
+        case when c.releffectivediststyle = 0 then
+          'EVEN'::text 
+        when c.releffectivediststyle = 1 then
+          'KEY'::text 
+        when c.releffectivediststyle  = 8 then
+          'ALL'::text 
+        when c.releffectivediststyle = 10 then
+          'AUTO(ALL)'::text 
+        when c.releffectivediststyle = 11 then
+          'AUTO(EVEN)'::text
+        else '<<UNKNOWN>>'::text end
+          as diststyle,
         case when c.relkind in ('m', 'v') then
-          pg_get_viewdef(c.oid)
+          pg_get_viewdef(c.reloid)
         else null end
           as definition
     from
-        pg_catalog.pg_class c
+        pg_catalog.pg_class_info c
         inner join pg_catalog.pg_namespace n
           ON n.oid = c.relnamespace
     where c.relkind in ('r', 'v', 'm', 'c', 'p')
@@ -20,11 +33,14 @@ select
     r.relationtype,
     r.schema,
     r.name,
+    r.diststyle,
     r.definition as definition,
     a.attnum as position_number,
     a.attname as attname,
     a.attnotnull as not_null,
     a.atttypid::regtype AS datatype,
+    a.attisdistkey AS is_dist_key,
+    a.attsortkeyord AS sort_key_ord,
     pg_get_expr(ad.adbin, ad.adrelid) as defaultdef,
     r.oid as oid,
     format_type(atttypid, atttypmod) AS datatypestring,

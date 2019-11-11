@@ -35,13 +35,36 @@ T_CREATE = """create table "public"."films" (
     "drange" daterange
 );
 """
-REDSHIFT_T_CREATE = """create table "public"."films" (
+REDSHIFT_T_CREATE_SINGLESORTKEY = """create table "public"."films_singlesortkey" (
+    "code" character(5),
+    "title" character varying(256) not null,
+    "did" bigint not null,
+    "date_prod" date,
+    "kind" character varying(10)
+)
+diststyle EVEN
+sortkey (title);
+"""
+REDSHIFT_T_CREATE_COMPOUND = """create table "public"."films" (
     "code" character(5) not null,
     "title" character varying(256) not null,
     "did" bigint not null,
     "date_prod" date,
     "kind" character varying(10)
-);
+)
+diststyle KEY
+distkey (kind)
+compound sortkey (code, title, did);
+"""
+REDSHIFT_T_CREATE_INTERLEAVED = """create table "public"."films_interleaved" (
+    "code" character(5),
+    "title" character varying(256) not null,
+    "did" bigint not null,
+    "date_prod" date,
+    "kind" character varying(10)
+)
+diststyle EVEN
+interleaved sortkey (did, title, code);
 """
 CV = "character varying"
 CV10 = "character varying(10)"
@@ -352,11 +375,39 @@ def setup_redshift_schema(s):
             did         bigint NOT NULL,
             date_prod   date,
             kind        varchar(10)
-        );
+        )
+        DISTSTYLE KEY
+        DISTKEY (kind)
+        COMPOUND SORTKEY (code, title, did);
     """
     )
     s.execute("""CREATE VIEW v_films AS (select * from films)""")
     s.execute("""CREATE VIEW v_films2 AS (select * from v_films)""")
+    s.execute(
+        """
+        CREATE TABLE films_interleaved(
+          code        char(5),
+          title       varchar NOT NULL,
+          did         bigint NOT NULL,
+          date_prod   date,
+          kind        varchar(10)
+        )
+        DISTSTYLE EVEN
+        INTERLEAVED SORTKEY(did, title, code);
+        """
+    )
+    s.execute(
+        """
+        CREATE TABLE films_singlesortkey(
+          code        char(5),
+          title       varchar NOT NULL SORTKEY,
+          did         bigint NOT NULL,
+          date_prod   date,
+          kind        varchar(10)
+        )
+        DISTSTYLE EVEN;
+        """
+    )
 
 
 def n(name, schema="public"):
@@ -563,11 +614,17 @@ def asserts_redshift(i):
     # tables
     t_films = n("films")
     t = i.tables[t_films]
+    t_films_interleaved = n("films_interleaved")
+    t_films_singlesortkey = n("films_singlesortkey")
+    t_interleaved = i.tables[t_films_interleaved]
+    t_singlesortkey = i.tables[t_films_singlesortkey]
 
     # create and drop tables
-    assert t.create_statement == REDSHIFT_T_CREATE
+    assert t.create_statement == REDSHIFT_T_CREATE_COMPOUND
     assert t.drop_statement == "drop table {};".format(t_films)
     assert t.alter_table_statement("x") == "alter table {} x;".format(t_films)
+    assert t_interleaved.create_statement == REDSHIFT_T_CREATE_INTERLEAVED
+    assert t_singlesortkey.create_statement == REDSHIFT_T_CREATE_SINGLESORTKEY
 
 
 def test_weird_names(postgres_db):
