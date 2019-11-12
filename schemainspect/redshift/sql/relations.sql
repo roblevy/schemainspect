@@ -41,6 +41,7 @@ select
     a.atttypid::regtype AS datatype,
     a.attisdistkey AS is_dist_key,
     a.attsortkeyord AS sort_key_ord,
+    format_encoding(a.attencodingtype) as encoding,
     pg_get_expr(ad.adbin, ad.adrelid) as defaultdef,
     r.oid as oid,
     format_type(atttypid, atttypmod) AS datatypestring,

@@ -153,6 +153,7 @@ class Redshift(DBInspector):
                     dbtype=c.datatype,
                     dbtypestr=c.datatypestring,
                     pytype=self.to_pytype(c.datatype),
+                    encoding=c.encoding,
                     default=c.defaultdef,
                     not_null=c.not_null,
                 )

@@ -35,33 +35,35 @@ T_CREATE = """create table "public"."films" (
     "drange" daterange
 );
 """
+# See https://docs.aws.amazon.com/en_pv/redshift/latest/dg/c_Compression_encodings.html
+# for default encoding types, used here.
 REDSHIFT_T_CREATE_SINGLESORTKEY = """create table "public"."films_singlesortkey" (
-    "code" character(5),
-    "title" character varying(256) not null,
-    "did" bigint not null,
-    "date_prod" date,
-    "kind" character varying(10)
+    "code" character(5) encode lzo,
+    "title" character varying(256) not null encode none,
+    "did" bigint not null encode lzo,
+    "date_prod" date encode lzo,
+    "kind" character varying(10) encode lzo
 )
 diststyle EVEN
 sortkey (title);
 """
 REDSHIFT_T_CREATE_COMPOUND = """create table "public"."films" (
-    "code" character(5) not null,
-    "title" character varying(256) not null,
-    "did" bigint not null,
-    "date_prod" date,
-    "kind" character varying(10)
+    "code" character(5) not null encode none,
+    "title" character varying(256) not null encode none,
+    "did" bigint not null encode mostly16,
+    "date_prod" date encode zstd,
+    "kind" character varying(10) encode lzo
 )
 diststyle KEY
 distkey (kind)
-compound sortkey (code, title, did);
+compound sortkey (code, title);
 """
 REDSHIFT_T_CREATE_INTERLEAVED = """create table "public"."films_interleaved" (
-    "code" character(5),
-    "title" character varying(256) not null,
-    "did" bigint not null,
-    "date_prod" date,
-    "kind" character varying(10)
+    "code" character(5) encode none,
+    "title" character varying(256) not null encode none,
+    "did" bigint not null encode none,
+    "date_prod" date encode lzo,
+    "kind" character varying(10) encode lzo
 )
 diststyle EVEN
 interleaved sortkey (did, title, code);
@@ -372,13 +374,13 @@ def setup_redshift_schema(s):
         CREATE TABLE films (
             code        char(5) CONSTRAINT firstkey PRIMARY KEY,
             title       varchar NOT NULL,
-            did         bigint NOT NULL,
-            date_prod   date,
+            did         bigint NOT NULL ENCODE MOSTLY16,
+            date_prod   date ENCODE ZSTD,
             kind        varchar(10)
         )
         DISTSTYLE KEY
         DISTKEY (kind)
-        COMPOUND SORTKEY (code, title, did);
+        COMPOUND SORTKEY (code, title);
     """
     )
     s.execute("""CREATE VIEW v_films AS (select * from films)""")

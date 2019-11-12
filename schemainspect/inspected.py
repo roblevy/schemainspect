@@ -48,6 +48,7 @@ class ColumnInfo(AutoRepr):
         not_null=False,
         is_enum=False,
         enum=None,
+        encoding=None,
         dbtypestr=None,
         collation=None,
     ):
@@ -59,6 +60,7 @@ class ColumnInfo(AutoRepr):
         self.not_null = not_null
         self.is_enum = is_enum
         self.enum = enum
+        self.encoding = encoding
         self.collation = collation
 
     def __eq__(self, other):
@@ -120,6 +122,8 @@ class ColumnInfo(AutoRepr):
             x += " not null"
         if self.default:
             x += " default {}".format(self.default)
+        if self.encoding:
+            x += " encode {}".format(self.encoding)
         return x
 
     @property
